@@ -59,12 +59,7 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
      */
     public PDPageTree(COSDictionary root)
     {
-        if (root == null)
-        {
-            throw new IllegalArgumentException("root cannot be null");
-        }
-        this.root = root;
-        document = null;
+        this(root, null);
     }
     
     /**
@@ -79,7 +74,19 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
         {
             throw new IllegalArgumentException("root cannot be null");
         }
-        this.root = root;
+        // repair bad PDFs which contain a Page dict instead of a page tree, see PDFBOX-3154
+        if (COSName.PAGE.equals(root.getCOSName(COSName.TYPE)))
+        {
+            COSArray kids = new COSArray();
+            kids.add(root);
+            this.root = new COSDictionary();
+            this.root.setItem(COSName.KIDS, kids);
+            this.root.setInt(COSName.COUNT, 1);
+        }
+        else
+        {
+            this.root = root;
+        }
         this.document = document;
     }
 
@@ -178,12 +185,8 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
         public PDPage next()
         {
             COSDictionary next = queue.poll();
-
-            // sanity check
-            if (next.getCOSName(COSName.TYPE) != COSName.PAGE)
-            {
-                throw new IllegalStateException("Expected Page but got " + next);
-            }
+            
+            sanitizeType(next);
 
             ResourceCache resourceCache = document != null ? document.getResourceCache() : null;
             return new PDPage(next, resourceCache);
@@ -205,16 +208,26 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
     {
         COSDictionary dict = get(index + 1, root, 0);
 
-        // sanity check
-        if (dict.getCOSName(COSName.TYPE) != COSName.PAGE)
-        {
-            throw new IllegalStateException("Expected Page but got " + dict);
-        }
+        sanitizeType(dict);
 
         ResourceCache resourceCache = document != null ? document.getResourceCache() : null;
         return new PDPage(dict, resourceCache);
     }
-
+    
+    private static void sanitizeType(COSDictionary dictionary)
+    {
+        COSName type = dictionary.getCOSName(COSName.TYPE);
+        if (type == null)
+        {
+            dictionary.setItem(COSName.TYPE, COSName.PAGE);
+            return;
+        }
+        if (!COSName.PAGE.equals(type))
+        {
+            throw new IllegalStateException("Expected 'Page' but found " + type);
+        }
+    }
+    
     /**
      * Returns the given COS page using a depth-first search.
      *

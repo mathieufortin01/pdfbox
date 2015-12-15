@@ -109,21 +109,33 @@ public class PDFTextStripper extends PDFTextStreamEngine
                 // ignore and use default
             }
         }
-
+    }
+    
+    static
+    {
         // check if we need to use the custom quicksort algorithm as a
-        // workaround to the transitivity issue of TextPositionComparator:
-        // https://issues.apache.org/jira/browse/PDFBOX-1512
+        // workaround to the PDFBOX-1512 transitivity issue of TextPositionComparator:
         boolean is16orLess = false;
         try
         {
-            String[] versionComponents = System.getProperty("java.version").split("\\.");
-            int javaMajorVersion = Integer.parseInt(versionComponents[0]);
-            int javaMinorVersion = Integer.parseInt(versionComponents[1]);
-            is16orLess = javaMajorVersion == 1 && javaMinorVersion <= 6;
+            String version = System.getProperty("java.specification.version");
+            StringTokenizer st = new StringTokenizer(version, ".");
+            int majorVersion = Integer.parseInt(st.nextToken());
+            int minorVersion = 0;
+            if (st.hasMoreTokens())
+            {
+                minorVersion = Integer.parseInt(st.nextToken());
+            }
+            is16orLess = majorVersion == 1 && minorVersion <= 6;
         }
         catch (SecurityException x)
         {
             // when run in an applet ignore and use default
+            // assume 1.7 or higher so that quicksort is used
+        }
+        catch (NumberFormatException nfe)
+        {
+            // should never happen, but if it does,
             // assume 1.7 or higher so that quicksort is used
         }
         useCustomQuickSort = !is16orLess;
@@ -165,7 +177,7 @@ public class PDFTextStripper extends PDFTextStreamEngine
     private float spacingTolerance = .5f;
     private float averageCharTolerance = .3f;
 
-    private List<PDThreadBead> pageArticles = null;
+    private List<PDRectangle> beadRectangles = null;
 
     /**
      * The charactersByArticle is used to extract text by article divisions. For example a PDF that has two columns like
@@ -262,13 +274,11 @@ public class PDFTextStripper extends PDFTextStreamEngine
      */
     protected void processPages(PDPageTree pages) throws IOException
     {
-        PDPageTree pagesTree = document.getPages();
-
         PDPage startBookmarkPage = startBookmark == null ? null
                 : startBookmark.findDestinationPage(document);
         if (startBookmarkPage != null)
         {
-            startBookmarkPageNumber = pagesTree.indexOf(startBookmarkPage) + 1;
+            startBookmarkPageNumber = pages.indexOf(startBookmarkPage) + 1;
         }
         else
         {
@@ -280,7 +290,7 @@ public class PDFTextStripper extends PDFTextStreamEngine
                 : endBookmark.findDestinationPage(document);
         if (endBookmarkPage != null)
         {
-            endBookmarkPageNumber = pagesTree.indexOf(endBookmarkPage) + 1;
+            endBookmarkPageNumber = pages.indexOf(endBookmarkPage) + 1;
         }
         else
         {
@@ -347,11 +357,12 @@ public class PDFTextStripper extends PDFTextStreamEngine
                 && (endBookmarkPageNumber == -1 || currentPageNo <= endBookmarkPageNumber))
         {
             startPage(page);
-            pageArticles = page.getThreadBeads();
-            int numberOfArticleSections = 1 + pageArticles.size() * 2;
-            if (!shouldSeparateByBeads)
+
+            int numberOfArticleSections = 1;
+            if (shouldSeparateByBeads)
             {
-                numberOfArticleSections = 1;
+                fillBeadRectangles(page);
+                numberOfArticleSections += beadRectangles.size() * 2;
             }
             int originalSize = charactersByArticle.size();
             charactersByArticle.setSize(numberOfArticleSections);
@@ -370,6 +381,43 @@ public class PDFTextStripper extends PDFTextStreamEngine
             super.processPage(page);
             writePage();
             endPage(page);
+        }
+    }
+
+    private void fillBeadRectangles(PDPage page)
+    {
+        beadRectangles = new ArrayList<PDRectangle>();
+        for (PDThreadBead bead : page.getThreadBeads())
+        {
+            if (bead == null)
+            {
+                // can't skip, because of null entry handling in processTextPosition()
+                beadRectangles.add(null);
+                continue;
+            }
+            
+            PDRectangle rect = bead.getRectangle();
+            
+            // bead rectangle is in PDF coordinates (y=0 is bottom),
+            // glyphs are in image coordinates (y=0 is top),
+            // so we must flip
+            PDRectangle mediaBox = page.getMediaBox();
+            float upperRightY = mediaBox.getUpperRightY() - rect.getLowerLeftY();
+            float lowerLeftY = mediaBox.getUpperRightY() - rect.getUpperRightY();
+            rect.setLowerLeftY(lowerLeftY);
+            rect.setUpperRightY(upperRightY);
+            
+            // adjust for cropbox
+            PDRectangle cropBox = page.getCropBox();
+            if (cropBox.getLowerLeftX() != 0 || cropBox.getLowerLeftY() != 0)
+            {
+                rect.setLowerLeftX(rect.getLowerLeftX() - cropBox.getLowerLeftX());
+                rect.setLowerLeftY(rect.getLowerLeftY() - cropBox.getLowerLeftY());
+                rect.setUpperRightX(rect.getUpperRightX() - cropBox.getLowerLeftX());
+                rect.setUpperRightY(rect.getUpperRightY() - cropBox.getLowerLeftY());
+            }
+            
+            beadRectangles.add(rect);
         }
     }
 
@@ -814,12 +862,11 @@ public class PDFTextStripper extends PDFTextStreamEngine
             float y = text.getY();
             if (shouldSeparateByBeads)
             {
-                for (int i = 0; i < pageArticles.size() && foundArticleDivisionIndex == -1; i++)
+                for (int i = 0; i < beadRectangles.size() && foundArticleDivisionIndex == -1; i++)
                 {
-                    PDThreadBead bead = pageArticles.get(i);
-                    if (bead != null)
+                    PDRectangle rect = beadRectangles.get(i);
+                    if (rect != null)
                     {
-                        PDRectangle rect = bead.getRectangle();
                         if (rect.contains(x, y))
                         {
                             foundArticleDivisionIndex = i * 2 + 1;

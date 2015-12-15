@@ -16,7 +16,6 @@
  */
 package org.apache.fontbox.cmap;
 
-import java.util.List;
 
 /**
  * This represents a single entry in the codespace range.
@@ -27,12 +26,23 @@ public class CodespaceRange
 {
     private byte[] start;
     private byte[] end;
-
+    private int codeLength = 0;
+    
     /**
      * Creates a new instance of CodespaceRange.
      */
     public CodespaceRange()
     {
+    }
+
+    /**
+     * Returns the length of the codes of the codespace.
+     * 
+     * @return the code length
+     */
+    public int getCodeLength()
+    {
+        return codeLength;
     }
 
     /** Getter for property end.
@@ -41,7 +51,7 @@ public class CodespaceRange
      */
     public byte[] getEnd()
     {
-        return this.end;
+        return end;
     }
 
     /** Setter for property end.
@@ -59,7 +69,7 @@ public class CodespaceRange
      */
     public byte[] getStart()
     {
-        return this.start;
+        return start;
     }
 
     /** Setter for property start.
@@ -69,6 +79,7 @@ public class CodespaceRange
     void setStart(byte[] startBytes)
     {
         start = startBytes;
+        codeLength = start.length;
     }
 
     /**
@@ -76,11 +87,19 @@ public class CodespaceRange
      */
     public boolean matches(byte[] code)
     {
+        return isFullMatch(code, code.length);
+    }
+
+    /**
+     * Returns true if the given code bytes match this codespace range.
+     */
+    public boolean isFullMatch(byte[] code, int codeLen)
+    {
         // code must be the same length as the bounding codes
-        if (code.length >= start.length && code.length <= end.length)
+        if (codeLen == codeLength)
         {
             // each of it bytes must lie between the corresponding bytes of the upper & lower bounds
-            for (int i = 0; i < code.length; i++)
+            for (int i = 0; i < codeLen; i++)
             {
                 int startNum = start[i] & 0xff;
                 int endNum = end[i] & 0xff;
@@ -95,37 +114,16 @@ public class CodespaceRange
         }
         return false;
     }
-
-    /**
-     * Returns true if the given code bytes match this codespace range.
-     */
-    public boolean isFullMatch(List<Byte> code)
-    {
-        // code must be the same length as the bounding codes
-        if (code.size() >= start.length && code.size() <= end.length)
-        {
-            // each of it bytes must lie between the corresponding bytes of the upper & lower bounds
-            for (int i = 0; i < code.size(); i++)
-            {
-                int startNum = start[i] & 0xff;
-                int endNum = end[i] & 0xff;
-                int codeNum = code.get(i) & 0xff;
-
-                if (codeNum > endNum || codeNum < startNum)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
+    
     /**
      * Returns true if the given byte matches the byte at the given index of this codespace range.
      */
     public boolean isPartialMatch(byte b, int index)
     {
+        if (index == codeLength)
+        {
+            return false;
+        }
         int startNum = start[index] & 0xff;
         int endNum = end[index] & 0xff;
         int codeNum = b & 0xff;

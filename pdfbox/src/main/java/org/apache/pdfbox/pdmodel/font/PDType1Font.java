@@ -36,6 +36,7 @@ import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.font.encoding.Encoding;
 import org.apache.pdfbox.pdmodel.font.encoding.StandardEncoding;
@@ -157,6 +158,7 @@ public class PDType1Font extends PDSimpleFont
      *
      * @param doc PDF document to write to
      * @param pfbIn PFB file stream
+     * @param encoding
      * @throws IOException
      */
     public PDType1Font(PDDocument doc, InputStream pfbIn, Encoding encoding) throws IOException
@@ -174,7 +176,9 @@ public class PDType1Font extends PDSimpleFont
     /**
      * Creates a Type 1 font from a Font dictionary in a PDF.
      * 
-     * @param fontDictionary font dictionary
+     * @param fontDictionary font dictionary.
+     * @throws IOException if there was an error initializing the font.
+     * @throws IllegalArgumentException if /FontFile3 was used.
      */
     public PDType1Font(COSDictionary fontDictionary) throws IOException
     {
@@ -273,6 +277,10 @@ public class PDType1Font extends PDSimpleFont
     {
         // scan backwards from the end of the first segment to find 'exec'
         int offset = Math.max(0, length1 - 4);
+        if (offset <= 0 || offset > bytes.length - 4)
+        {
+            offset = bytes.length - 4;
+        }
         while (offset > 0)
         {
             if (bytes[offset + 0] == 'e' &&
@@ -293,7 +301,10 @@ public class PDType1Font extends PDSimpleFont
 
         if (length1 - offset != 0 && offset > 0)
         {
-            LOG.warn("Ignored invalid Length1 for Type 1 font " + getName());
+            if (LOG.isWarnEnabled())
+            {
+                LOG.warn("Ignored invalid Length1 " + length1 + " for Type 1 font " + getName());
+            }
             return offset;
         }
 
@@ -334,8 +345,15 @@ public class PDType1Font extends PDSimpleFont
         }
 
         String name = getGlyphList().codePointToName(unicode);
+        if (!encoding.contains(name))
+        {
+            throw new IllegalArgumentException(
+                    String.format("U+%04X is not available in this font's encoding: %s",
+                                  unicode, encoding.getEncodingName()));
+        }
+        
         String nameInFont = getNameInFont(name);
-        Map<String, Integer> inverted = getInvertedEncoding();
+        Map<String, Integer> inverted = encoding.getNameToCodeMap();
 
         if (nameInFont.equals(".notdef") || !genericFont.hasGlyph(nameInFont))
         {
@@ -435,6 +453,14 @@ public class PDType1Font extends PDSimpleFont
     @Override
     public BoundingBox getBoundingBox() throws IOException
     {
+        if (getFontDescriptor() != null) {
+            PDRectangle bbox = getFontDescriptor().getFontBoundingBox();
+            if (bbox.getLowerLeftX() != 0 || bbox.getLowerLeftY() != 0 ||
+                bbox.getUpperRightX() != 0 || bbox.getUpperRightY() != 0) {
+                return new BoundingBox(bbox.getLowerLeftX(), bbox.getLowerLeftY(),
+                                       bbox.getUpperRightX(), bbox.getUpperRightY());
+            }
+        }
         return genericFont.getFontBBox();
     }
 

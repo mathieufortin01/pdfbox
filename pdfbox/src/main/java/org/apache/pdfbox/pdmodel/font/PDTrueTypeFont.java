@@ -36,6 +36,7 @@ import org.apache.fontbox.util.BoundingBox;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.font.encoding.BuiltInEncoding;
 import org.apache.pdfbox.pdmodel.font.encoding.Encoding;
@@ -300,6 +301,11 @@ public class PDTrueTypeFont extends PDSimpleFont implements PDVectorFont
     @Override
     public BoundingBox getBoundingBox() throws IOException
     {
+        if (getFontDescriptor() != null) {
+            PDRectangle bbox = getFontDescriptor().getFontBoundingBox();
+            return new BoundingBox(bbox.getLowerLeftX(), bbox.getLowerLeftY(),
+                                   bbox.getUpperRightX(), bbox.getUpperRightY());
+        }
         return ttf.getFontBBox();
     }
 
@@ -345,16 +351,17 @@ public class PDTrueTypeFont extends PDSimpleFont implements PDVectorFont
     @Override
     protected byte[] encode(int unicode) throws IOException
     {
-        if (getEncoding() != null)
+        if (encoding != null)
         {
-            if (!getEncoding().contains(getGlyphList().codePointToName(unicode)))
+            if (!encoding.contains(getGlyphList().codePointToName(unicode)))
             {
                 throw new IllegalArgumentException(
-                    String.format("U+%04X is not available in this font's Encoding", unicode));
+                    String.format("U+%04X is not available in this font's encoding: %s",
+                                  unicode, encoding.getEncodingName()));
             }
 
             String name = getGlyphList().codePointToName(unicode);
-            Map<String, Integer> inverted = getInvertedEncoding();
+            Map<String, Integer> inverted = encoding.getNameToCodeMap();
 
             if (!ttf.hasGlyph(name))
             {

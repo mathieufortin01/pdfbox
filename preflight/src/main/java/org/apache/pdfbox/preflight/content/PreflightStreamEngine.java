@@ -78,10 +78,12 @@ import org.apache.pdfbox.contentstream.operator.state.SetMatrix;
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceCMYKColor;
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColor;
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColorSpace;
+import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceGrayColor;
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceRGBColor;
 import org.apache.pdfbox.contentstream.operator.color.SetStrokingDeviceCMYKColor;
 import org.apache.pdfbox.contentstream.operator.color.SetStrokingColor;
 import org.apache.pdfbox.contentstream.operator.color.SetStrokingColorSpace;
+import org.apache.pdfbox.contentstream.operator.color.SetStrokingDeviceGrayColor;
 import org.apache.pdfbox.contentstream.operator.color.SetStrokingDeviceRGBColor;
 import org.apache.pdfbox.contentstream.operator.state.SetGraphicsStateParameters;
 import org.apache.pdfbox.contentstream.operator.text.SetTextLeading;
@@ -128,6 +130,9 @@ public abstract class PreflightStreamEngine extends PDFStreamEngine
 
         addOperator(new SetNonStrokingDeviceRGBColor());
         addOperator(new SetStrokingDeviceRGBColor());
+
+        addOperator(new SetNonStrokingDeviceGrayColor());
+        addOperator(new SetStrokingDeviceGrayColor());
 
         addOperator(new SetStrokingColor());
         addOperator(new SetStrokingColorN());
@@ -195,9 +200,6 @@ public abstract class PreflightStreamEngine extends PDFStreamEngine
         addOperator(new StubOperator("f"));
         addOperator(new StubOperator("F"));
         addOperator(new StubOperator("f*"));
-
-        addOperator(new StubOperator("g"));
-        addOperator(new StubOperator("G"));
 
         addOperator(new StubOperator("M"));
         addOperator(new StubOperator("MP"));
@@ -318,7 +320,7 @@ public abstract class PreflightStreamEngine extends PDFStreamEngine
 
                 if (cs == null)
                 {
-                    registerError("The ColorSpace is unknown", ERROR_GRAPHIC_UNEXPECTED_VALUE_FOR_KEY);
+                    registerError("The ColorSpace " + colorSpace + " is unknown", ERROR_GRAPHIC_UNEXPECTED_VALUE_FOR_KEY);
                     return;
                 }
             }
@@ -539,7 +541,9 @@ public abstract class PreflightStreamEngine extends PDFStreamEngine
         }
         else
         {
-            registerError("The operand doesn't have the expected type", ERROR_GRAPHIC_UNEXPECTED_VALUE_FOR_KEY);
+            registerError("The operand " + arguments.get(0) + " for colorSpace operator " + 
+                    operator.getName() + " doesn't have the expected type", 
+                    ERROR_GRAPHIC_UNEXPECTED_VALUE_FOR_KEY);
             return;
         }
 
@@ -566,7 +570,7 @@ public abstract class PreflightStreamEngine extends PDFStreamEngine
 
         if (cs == null)
         {
-            registerError("The ColorSpace is unknown", ERROR_GRAPHIC_UNEXPECTED_VALUE_FOR_KEY);
+            registerError("The ColorSpace " + colorSpaceName + " is unknown", ERROR_GRAPHIC_UNEXPECTED_VALUE_FOR_KEY);
             return;
         }
 

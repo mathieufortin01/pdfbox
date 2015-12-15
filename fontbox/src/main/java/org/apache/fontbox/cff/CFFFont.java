@@ -18,6 +18,7 @@ package org.apache.fontbox.cff;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,8 +38,8 @@ public abstract class CFFFont implements FontBoxFont
     protected final Map<String, Object> topDict = new LinkedHashMap<String, Object>();
     protected CFFCharset charset;
     protected final List<byte[]> charStrings = new ArrayList<byte[]>();
-    protected IndexData globalSubrIndex;
-    private byte[] data;
+    protected List<byte[]> globalSubrIndex;
+    private CFFParser.ByteSource source;
 
     /**
      * The name of the font.
@@ -119,33 +120,29 @@ public abstract class CFFFont implements FontBoxFont
     }
 
     /**
-     * Returns the character strings dictionary.
+     * Returns the character strings dictionary. For expert users only.
      *
      * @return the dictionary
      */
-    List<byte[]> getCharStringBytes()
+    public final List<byte[]> getCharStringBytes()
     {
-        return charStrings;
+        return Collections.unmodifiableList(charStrings);
     }
 
     /**
-     * Sets the original data.
-     *
-     * @param data the original data.
+     * Sets a byte source to re-read the CFF data in the future.
      */
-    void setData(byte[] data)
+    final void setData(CFFParser.ByteSource source)
     {
-        this.data = data;
+        this.source = source;
     }
-
+    
     /**
-     * Returns the the original data.
-     *
-     * @return the dictionary
+     * Returns the CFF data.
      */
-    public byte[] getData()
+    public byte[] getData() throws IOException
     {
-        return data;
+        return source.getBytes();
     }
     
     /**
@@ -159,19 +156,19 @@ public abstract class CFFFont implements FontBoxFont
     /**
      * Sets the global subroutine index data.
      * 
-     * @param globalSubrIndexValue the IndexData object containing the global subroutines
+     * @param globalSubrIndexValue an list containing the global subroutines
      */
-    void setGlobalSubrIndex(IndexData globalSubrIndexValue)
+    void setGlobalSubrIndex(List<byte[]> globalSubrIndexValue)
     {
         globalSubrIndex = globalSubrIndexValue;
     }
 
     /**
-     * Returns the global subroutine index data.
+     * Returns the list containing the global subroutine .
      * 
      * @return the dictionary
      */
-    public IndexData getGlobalSubrIndex()
+    public List<byte[]> getGlobalSubrIndex()
     {
         return globalSubrIndex;
     }

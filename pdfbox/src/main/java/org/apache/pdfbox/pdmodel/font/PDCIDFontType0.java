@@ -34,6 +34,7 @@ import org.apache.fontbox.cff.Type2CharString;
 import org.apache.fontbox.util.BoundingBox;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.io.IOUtils;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.util.Matrix;
 
@@ -95,7 +96,7 @@ public class PDCIDFontType0 extends PDCIDFont
             CFFParser cffParser = new CFFParser();
             try
             {
-                cffFont = cffParser.parse(bytes).get(0);
+                cffFont = cffParser.parse(bytes, new ByteSource()).get(0);
             }
             catch (IOException e)
             {
@@ -187,10 +188,28 @@ public class PDCIDFontType0 extends PDCIDFont
         }
         return fontMatrix;
     }
+    
+    private class ByteSource implements CFFParser.ByteSource
+    {
+        @Override
+        public byte[] getBytes() throws IOException
+        {
+            PDStream ff3Stream = getFontDescriptor().getFontFile3();
+            return IOUtils.toByteArray(ff3Stream.createInputStream());
+        }
+    }
 
     @Override
     public BoundingBox getBoundingBox()
     {
+        if (getFontDescriptor() != null) {
+            PDRectangle bbox = getFontDescriptor().getFontBoundingBox();
+            if (bbox.getLowerLeftX() != 0 || bbox.getLowerLeftY() != 0 ||
+                bbox.getUpperRightX() != 0 || bbox.getUpperRightY() != 0) {
+                return new BoundingBox(bbox.getLowerLeftX(), bbox.getLowerLeftY(),
+                                       bbox.getUpperRightX(), bbox.getUpperRightY());
+            }
+        }
         if (cidFont != null)
         {
             return cidFont.getFontBBox();

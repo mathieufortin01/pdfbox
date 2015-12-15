@@ -37,7 +37,7 @@
     <inceptionYear>2002</inceptionYear>
     
     <properties>
-        <svn.scmJavadocUrl>https://svn.apache.org/repos/asf/pdfbox/cmssite/trunk/content/docs/${project.version}/javadocs</svn.scmJavadocUrl>
+    	<git.scmJavadocUrl>git:https://git-wip-us.apache.org/repos/asf/pdfbox-docs//content/docs/${project.version}/javadocs</git.scmJavadocUrl>
     </properties>
     
     <dependencies>
@@ -65,7 +65,13 @@
             <artifactId>junit</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- For legal reasons (incompatible license), these two dependencies 
+        <dependency>
+            <groupId>com.googlecode.java-diff-utils</groupId>
+            <artifactId>diffutils</artifactId>
+            <version>1.3.0</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- For legal reasons (incompatible license), these three dependencies below
         are to be used only in the tests and may not be distributed. 
         See also LEGAL-195 -->
         <dependency>
@@ -74,8 +80,13 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>net.java.dev.jai-imageio</groupId>
-            <artifactId>jai-imageio-core-standalone</artifactId>
+            <groupId>com.github.jai-imageio</groupId>
+            <artifactId>jai-imageio-core</artifactId>
+            <scope>test</scope>
+        </dependency>    
+        <dependency>
+            <groupId>com.github.jai-imageio</groupId>
+            <artifactId>jai-imageio-jpeg2000</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -136,6 +147,7 @@
                         <exclude>src/main/resources/org/apache/pdfbox/resources/text/BidiMirroring.txt</exclude>
                         <exclude>src/main/resources/META-INF/services/*</exclude>
                         <exclude>src/test/resources/input/rendering/*.ai</exclude>
+                        <exclude>src/test/resources/input/*.txt</exclude>
                         <exclude>src/test/resources/output/*</exclude>
                         <exclude>release.properties</exclude>
                         <exclude>src/test/resources/org/apache/pdfbox/encryption/*.der</exclude>
@@ -154,7 +166,7 @@
                 <artifactId>maven-scm-publish-plugin</artifactId>
                 <configuration>
                     <content>${project.reporting.outputDirectory}/apidocs</content>
-                    <pubScmUrl>scm:svn:${svn.scmJavadocUrl}</pubScmUrl>
+                    <pubScmUrl>scm:${git.scmJavadocUrl}</pubScmUrl>
                     <tryUpdate>true</tryUpdate>
                     <checkoutDirectory>${svn.scmJavadocCheckoutDirectory}</checkoutDirectory>
                     <serverId>pdfbox-site</serverId>

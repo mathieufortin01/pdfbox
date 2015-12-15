@@ -24,6 +24,7 @@ import java.awt.GraphicsDevice;
 import java.awt.Paint;
 import java.awt.RenderingHints;
 import java.awt.Shape;
+import java.awt.Stroke;
 import java.awt.TexturePaint;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Area;
@@ -39,7 +40,10 @@ import java.util.Map;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSNumber;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDCIDFontType0;
 import org.apache.pdfbox.pdmodel.font.PDCIDFontType2;
@@ -52,6 +56,7 @@ import org.apache.pdfbox.pdmodel.graphics.PDLineDashPattern;
 import org.apache.pdfbox.pdmodel.graphics.blend.SoftMaskPaint;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace;
+import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceGray;
 import org.apache.pdfbox.pdmodel.graphics.color.PDPattern;
 import org.apache.pdfbox.pdmodel.graphics.form.PDTransparencyGroup;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImage;
@@ -63,6 +68,9 @@ import org.apache.pdfbox.pdmodel.graphics.state.PDGraphicsState;
 import org.apache.pdfbox.pdmodel.graphics.state.PDSoftMask;
 import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationMarkup;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDBorderStyleDictionary;
 import org.apache.pdfbox.util.Matrix;
 import org.apache.pdfbox.util.Vector;
 
@@ -827,6 +835,7 @@ public class PageDrawer extends PDFGraphicsStreamEngine
     {
         lastClip = null;
         //TODO support more annotation flags (Invisible, NoZoom, NoRotate)
+        // Example for NoZoom can be found in p5 of PDFBOX-2348
         int deviceType = graphics.getDeviceConfiguration().getDevice().getType();
         if (deviceType == GraphicsDevice.TYPE_PRINTER && !annotation.isPrinted())
         {
@@ -841,6 +850,156 @@ public class PageDrawer extends PDFGraphicsStreamEngine
             return;
         }
         super.showAnnotation(annotation);
+
+        if (annotation.getAppearance() == null)
+        {
+            if (annotation instanceof PDAnnotationLink)
+            {
+                drawAnnotationLinkBorder((PDAnnotationLink) annotation);
+            }
+
+            if (annotation instanceof PDAnnotationMarkup && annotation.getSubtype().equals(PDAnnotationMarkup.SUB_TYPE_INK))
+            {
+                drawAnnotationInk((PDAnnotationMarkup) annotation);
+            }
+        }
+    }
+
+    private static class AnnotationBorder
+    {
+        private float[] dashArray = null;
+        private boolean underline = false;
+        private float width = 0;
+        private PDColor color;
+    }
+    
+    // return border info. BorderStyle must be provided as parameter because
+    // method is not available in the base class
+    private AnnotationBorder getAnnotationBorder(PDAnnotation annotation, 
+            PDBorderStyleDictionary borderStyle)
+    {
+        AnnotationBorder ab = new AnnotationBorder();
+        COSArray border = annotation.getBorder();
+        if (borderStyle == null)
+        {
+            if (border.get(2) instanceof COSNumber)
+            {
+                ab.width = ((COSNumber) border.getObject(2)).floatValue();
+            }
+            if (border.size() > 3)
+            {
+                COSBase base3 = border.getObject(3);
+                if (base3 instanceof COSArray)
+                {
+                    ab.dashArray = ((COSArray) base3).toFloatArray();
+                }
+            }
+        }
+        else
+        {
+            ab.width = borderStyle.getWidth();
+            if (borderStyle.getStyle().equals(PDBorderStyleDictionary.STYLE_DASHED))
+            {
+                ab.dashArray = borderStyle.getDashStyle().getDashArray();
+            }
+            if (borderStyle.getStyle().equals(PDBorderStyleDictionary.STYLE_UNDERLINE))
+            {
+                ab.underline = true;
+            }
+        }
+        ab.color = annotation.getColor();
+        if (ab.color == null)
+        {
+            // spec is unclear, but black seems to be the right thing to do
+            ab.color = new PDColor(new float[] { 0 }, PDDeviceGray.INSTANCE);
+        }
+        return ab;
+    }
+
+    private void drawAnnotationLinkBorder(PDAnnotationLink link) throws IOException
+    {
+        AnnotationBorder ab = getAnnotationBorder(link, link.getBorderStyle());
+        if (ab.width == 0)
+        {
+            return;
+        }
+        PDRectangle rectangle = link.getRectangle();
+        Stroke oldStroke = graphics.getStroke();
+        graphics.setPaint(getPaint(ab.color));
+        BasicStroke stroke = new BasicStroke(ab.width, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, ab.dashArray, 0);
+        graphics.setStroke(stroke);
+        graphics.setClip(null);
+        if (ab.underline)
+        {
+            graphics.drawLine((int) rectangle.getLowerLeftX(), (int) rectangle.getLowerLeftY(),
+                    (int) (rectangle.getLowerLeftX() + rectangle.getWidth()), (int) rectangle.getLowerLeftY());
+        }
+        else
+        {
+            graphics.drawRect((int) rectangle.getLowerLeftX(), (int) rectangle.getLowerLeftY(),
+                    (int) rectangle.getWidth(), (int) rectangle.getHeight());
+        }
+        graphics.setStroke(oldStroke);
+    }
+
+    private void drawAnnotationInk(PDAnnotationMarkup inkAnnotation) throws IOException
+    {
+        if (!inkAnnotation.getCOSObject().containsKey(COSName.INKLIST))
+        {
+            return;
+        }
+        //TODO there should be an InkAnnotation class with a getInkList method
+        COSBase base = inkAnnotation.getCOSObject().getDictionaryObject(COSName.INKLIST);
+        if (!(base instanceof COSArray))
+        {
+            return;
+        }
+        // PDF spec does not mention /Border for ink annotations, but it is used if /BS is not available
+        AnnotationBorder ab = getAnnotationBorder(inkAnnotation, inkAnnotation.getBorderStyle());
+        if (ab.width == 0)
+        {
+            return;
+        }
+        graphics.setPaint(getPaint(ab.color));
+        Stroke oldStroke = graphics.getStroke();
+        BasicStroke stroke = 
+                new BasicStroke(ab.width, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, ab.dashArray, 0);
+        graphics.setStroke(stroke);
+        graphics.setClip(null);
+        COSArray pathsArray = (COSArray) base;
+        for (COSBase baseElement : (Iterable<? extends COSBase>) pathsArray.toList())
+        {
+            if (!(baseElement instanceof COSArray))
+            {
+                continue;
+            }
+            COSArray pathArray = (COSArray) baseElement;
+            int nPoints = pathArray.size() / 2;
+            
+            // "When drawn, the points shall be connected by straight lines or curves 
+            // in an implementation-dependent way" - we do lines.
+            GeneralPath path = new GeneralPath();
+            for (int i = 0; i < nPoints; ++i)
+            {
+                COSBase bx = pathArray.getObject(i * 2);
+                COSBase by = pathArray.getObject(i * 2 + 1);
+                if (bx instanceof COSNumber && by instanceof COSNumber)
+                {
+                    float x = ((COSNumber) bx).floatValue();
+                    float y = ((COSNumber) by).floatValue();
+                    if (i == 0)
+                    {
+                        path.moveTo(x, y);
+                    }
+                    else
+                    {
+                        path.lineTo(x, y);
+                    }
+                }
+            }
+            graphics.draw(path);
+        }
+        graphics.setStroke(oldStroke);
     }
 
     @Override

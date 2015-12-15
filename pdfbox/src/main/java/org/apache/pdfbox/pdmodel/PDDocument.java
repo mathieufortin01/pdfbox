@@ -16,6 +16,7 @@
  */
 package org.apache.pdfbox.pdmodel;
 
+import java.io.BufferedOutputStream;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -35,12 +36,10 @@ import org.apache.pdfbox.cos.COSDocument;
 import org.apache.pdfbox.cos.COSInteger;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSObject;
-import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.io.MemoryUsageSetting;
 import org.apache.pdfbox.io.RandomAccessBuffer;
 import org.apache.pdfbox.io.RandomAccessBufferedFileInputStream;
-import org.apache.pdfbox.io.RandomAccessInputStream;
 import org.apache.pdfbox.io.RandomAccessRead;
 import org.apache.pdfbox.io.ScratchFile;
 import org.apache.pdfbox.pdfparser.PDFParser;
@@ -56,7 +55,6 @@ import org.apache.pdfbox.pdmodel.encryption.SecurityHandlerFactory;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary;
-import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureInterface;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureOptions;
@@ -176,7 +174,7 @@ public class PDDocument implements Closeable
      * Add a signature.
      * 
      * @param sigObject is the PDSignatureField model
-     * @param signatureInterface is a interface which provides signing capabilities
+     * @param signatureInterface is an interface which provides signing capabilities
      * @throws IOException if there is an error creating required fields
      */
     public void addSignature(PDSignature sigObject, SignatureInterface signatureInterface) throws IOException
@@ -185,10 +183,12 @@ public class PDDocument implements Closeable
     }
 
     /**
-     * This will add a signature to the document.
-     * 
+     * This will add a signature to the document. If the 0-based page number in the options
+     * parameter is smaller than 0 or larger than max, the nearest valid page number will be used
+     * (i.e. 0 or max) and no exception will be thrown.
+     *
      * @param sigObject is the PDSignatureField model
-     * @param signatureInterface is a interface which provides signing capabilities
+     * @param signatureInterface is an interface which provides signing capabilities
      * @param options signature options
      * @throws IOException if there is an error creating required fields
      */
@@ -198,14 +198,14 @@ public class PDDocument implements Closeable
         // Reserve content
         // We need to reserve some space for the signature. Some signatures including
         // big certificate chain and we need enough space to store it.
-        int preferedSignatureSize = options.getPreferedSignatureSize();
-        if (preferedSignatureSize > 0)
+        int preferredSignatureSize = options.getPreferredSignatureSize();
+        if (preferredSignatureSize > 0)
         {
-            sigObject.setContents(new byte[preferedSignatureSize]);
+            sigObject.setContents(new byte[preferredSignatureSize]);
         }
         else
         {
-            sigObject.setContents(new byte[0x2500]);
+            sigObject.setContents(new byte[SignatureOptions.DEFAULT_SIGNATURE_SIZE]);
         }
 
         // Reserve ByteRange
@@ -243,14 +243,6 @@ public class PDDocument implements Closeable
             acroForm.getCOSObject().setNeedToBeUpdated(true);
         }
 
-        // For invisible signatures, the annotation has a rectangle array with values [ 0 0 0 0 ]. This annotation is
-        // usually attached to the viewed page when the signature is created. Despite not having an appearance, the
-        // annotation AP and N dictionaries may be present in some versions of Acrobat. If present, N references the
-        // DSBlankXObj (blank) XObject.
-
-        // Create Annotation / Field for signature
-        List<PDAnnotation> annotations = page.getAnnotations();
-
         List<PDField> fields = acroForm.getFields();
         if (fields == null)
         {
@@ -267,7 +259,8 @@ public class PDDocument implements Closeable
             signatureField.getWidgets().get(0).setPage(page);
         }
         // to conform PDF/A-1 requirement:
-        // The /F key's Print flag bit shall be set to 1 and its Hidden, Invisible and NoView flag bits shall be set to 0
+        // The /F key's Print flag bit shall be set to 1 and 
+        // its Hidden, Invisible and NoView flag bits shall be set to 0
         signatureField.getWidgets().get(0).setPrinted(true);
 
         // Set the AcroForm Fields
@@ -284,12 +277,14 @@ public class PDDocument implements Closeable
         // Distinction of case for visual and non-visual signature
         if (visualSignature == null)
         {
-            prepareNonVisibleSignature(signatureField, acroForm);
+            prepareNonVisibleSignature(signatureField);
+            return;
         }
-        else
-        {
-            prepareVisibleSignature(signatureField, acroForm, visualSignature);
-        }
+        
+        prepareVisibleSignature(signatureField, acroForm, visualSignature);
+
+        // Create Annotation / Field for signature
+        List<PDAnnotation> annotations = page.getAnnotations();
 
         // Get the annotations of the page and append the signature-annotation to it
         // take care that page and acroforms do not share the same array (if so, we don't need to add it twice)
@@ -370,11 +365,11 @@ public class PDDocument implements Closeable
                 }
 
                 // Search for signature field
-                COSBase ft = cosBaseDict.getDictionaryObject(COSName.FT);
+                COSBase fieldType = cosBaseDict.getDictionaryObject(COSName.FT);
                 COSBase apDict = cosBaseDict.getDictionaryObject(COSName.AP);
-                if (sigFieldNotFound && COSName.SIG.equals(ft) && apDict != null)
+                if (sigFieldNotFound && COSName.SIG.equals(fieldType) && apDict instanceof COSDictionary)
                 {
-                    assignAppearanceDictionary(signatureField, cosBaseDict);
+                    assignAppearanceDictionary(signatureField, (COSDictionary) apDict);
                     assignAcroFormDefaultResource(acroForm, cosBaseDict);
                     sigFieldNotFound = false;
                 }
@@ -387,57 +382,42 @@ public class PDDocument implements Closeable
         }
     }
 
-    private void assignSignatureRectangle(PDSignatureField signatureField, COSDictionary cosBaseDict)
+    private void assignSignatureRectangle(PDSignatureField signatureField, COSDictionary annotDict)
     {
-        // Read and set the Rectangle for visual signature
-        COSArray rectAry = (COSArray) cosBaseDict.getDictionaryObject(COSName.RECT);
-        PDRectangle rect = new PDRectangle(rectAry);
+        // Read and set the rectangle for visual signature
+        COSArray rectArray = (COSArray) annotDict.getDictionaryObject(COSName.RECT);
+        PDRectangle rect = new PDRectangle(rectArray);
         signatureField.getWidgets().get(0).setRectangle(rect);
     }
 
-    private void assignAppearanceDictionary(PDSignatureField signatureField, COSDictionary dict)
+    private void assignAppearanceDictionary(PDSignatureField signatureField, COSDictionary apDict)
     {
         // read and set Appearance Dictionary
-        PDAppearanceDictionary ap
-                = new PDAppearanceDictionary((COSDictionary) dict.getDictionaryObject(COSName.AP));
-        ap.getCOSObject().setDirect(true);
+        PDAppearanceDictionary ap = new PDAppearanceDictionary(apDict);
+        apDict.setDirect(true);
         signatureField.getWidgets().get(0).setAppearance(ap);
     }
 
     private void assignAcroFormDefaultResource(PDAcroForm acroForm, COSDictionary dict)
     {
-        // read and set AcroForm DefaultResource
-        COSDictionary dr = (COSDictionary) dict.getDictionaryObject(COSName.DR);
-        if (dr != null)
+        // read and set AcroForm default resource dictionary /DR if available
+        COSBase base = dict.getDictionaryObject(COSName.DR);
+        if (base instanceof COSDictionary)
         {
+            COSDictionary dr = (COSDictionary) base;
             dr.setDirect(true);
             dr.setNeedToBeUpdated(true);
-            COSDictionary acroFormDict = acroForm.getCOSObject();
-            acroFormDict.setItem(COSName.DR, dr);
+            acroForm.getCOSObject().setItem(COSName.DR, dr);
         }
     }
 
-    private void prepareNonVisibleSignature(PDSignatureField signatureField, PDAcroForm acroForm)
+    private void prepareNonVisibleSignature(PDSignatureField signatureField)
             throws IOException
     {
+        // "Signature fields that are not intended to be visible shall
+        // have an annotation rectangle that has zero height and width."
         // Set rectangle for non-visual signature to rectangle array [ 0 0 0 0 ]
         signatureField.getWidgets().get(0).setRectangle(new PDRectangle());
-        // Clear AcroForm / Set DefaultRessource
-        acroForm.setDefaultResources(null);
-        // Set empty Appearance-Dictionary
-        PDAppearanceDictionary ap = new PDAppearanceDictionary();
-        
-        // Create empty visual appearance stream
-        COSStream apsStream = getDocument().createCOSStream();
-        apsStream.createOutputStream().close();
-        PDAppearanceStream aps = new PDAppearanceStream(apsStream);
-        COSDictionary cosObject = (COSDictionary) aps.getCOSObject();
-        cosObject.setItem(COSName.SUBTYPE, COSName.FORM);
-        cosObject.setItem(COSName.BBOX, new PDRectangle());
-        
-        ap.setNormalAppearance(aps);
-        ap.getCOSObject().setDirect(true);
-        signatureField.getWidgets().get(0).setAppearance(ap);
     }
 
     /**
@@ -848,11 +828,20 @@ public class PDDocument implements Closeable
                                   MemoryUsageSetting memUsageSetting) throws IOException
     {
         RandomAccessBufferedFileInputStream raFile = new RandomAccessBufferedFileInputStream(file);
-        PDFParser parser = new PDFParser(raFile, password, keyStore, alias, new ScratchFile(memUsageSetting));
         try
         {
-            parser.parse();
-            return parser.getPDDocument();
+            ScratchFile scratchFile = new ScratchFile(memUsageSetting);
+            try
+            {
+                PDFParser parser = new PDFParser(raFile, password, keyStore, alias, scratchFile);
+                parser.parse();
+                return parser.getPDDocument();
+            }
+            catch (IOException ioe)
+            {
+                IOUtils.closeQuietly(scratchFile);
+                throw ioe;
+            }
         }
         catch (IOException ioe)
         {
@@ -967,10 +956,18 @@ public class PDDocument implements Closeable
                                   String alias, MemoryUsageSetting memUsageSetting) throws IOException
     {
         ScratchFile scratchFile = new ScratchFile(memUsageSetting);
-        RandomAccessRead source = scratchFile.createBuffer(input);
-        PDFParser parser = new PDFParser(source, password, keyStore, alias, scratchFile);
-        parser.parse();
-        return parser.getPDDocument();
+        try
+        {
+            RandomAccessRead source = scratchFile.createBuffer(input);
+            PDFParser parser = new PDFParser(source, password, keyStore, alias, scratchFile);
+            parser.parse();
+            return parser.getPDDocument();
+        }
+        catch (IOException ioe)
+        {
+            IOUtils.closeQuietly(scratchFile);
+            throw ioe;
+        }
     }
 
     /**
@@ -1064,7 +1061,7 @@ public class PDDocument implements Closeable
      */
     public void save(File file) throws IOException
     {
-        save(new FileOutputStream(file));
+        save(new BufferedOutputStream(new FileOutputStream(file)));
     }
 
     /**
@@ -1110,11 +1107,10 @@ public class PDDocument implements Closeable
      */
     public void saveIncremental(OutputStream output) throws IOException
     {
-        InputStream input = new RandomAccessInputStream(pdfSource);
         COSWriter writer = null;
         try
         {
-            writer = new COSWriter(output, input);
+            writer = new COSWriter(output, pdfSource);
             writer.write(this, signInterface);
             writer.close();
         }
@@ -1138,7 +1134,11 @@ public class PDDocument implements Closeable
         return getDocumentCatalog().getPages().get(pageIndex);
     }
 
-    // todo: new!
+    /**
+     * Returns the page tree.
+     * 
+     * @return the page tree
+     */
     public PDPageTree getPages()
     {
         return getDocumentCatalog().getPages();
